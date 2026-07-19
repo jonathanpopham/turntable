@@ -31,7 +31,7 @@ function makeStub(config: StubConfig = {}): { engine: EngineLike; calls: StubCal
     status: async (): Promise<StatusResult> => {
       calls.status += 1;
       if (config.statusError !== undefined) throw config.statusError;
-      return { view: IDLE, intent: null, observedAt: 1_700_000_000_000, version: 7 };
+      return { view: IDLE, intent: null, observedAt: 1_700_000_000_000, version: 7, bootId: "boot-test", serviceId: null };
     },
     up: async (): Promise<CommandResult> => {
       calls.up += 1;
@@ -154,6 +154,8 @@ describe("server routes", () => {
         intent: null,
         observedAt: 1_700_000_000_000,
         version: 7,
+        bootId: "boot-test",
+        serviceId: null,
       });
       expect(calls.status).toBe(1);
     }));

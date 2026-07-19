@@ -20,6 +20,10 @@ export type StatusResponse = {
   intent: Intent | null;
   observedAt: number;
   version: number;
+  /** Per-process id; versions restart with the controller, so the version floor resets when this changes. */
+  bootId: string;
+  /** Managed service id when observed present; shows the live Railway effect. */
+  serviceId: string | null;
 };
 
 /** POST /api/up | /api/down, after the guard. 409 bodies carry "conflict". */
@@ -113,7 +117,11 @@ export function parseStatusResponse(x: unknown): StatusResponse | null {
   const observedAt = x["observedAt"];
   const version = x["version"];
   if (!isFiniteNumber(observedAt) || !isFiniteNumber(version)) return null;
-  return { view, intent, observedAt, version };
+  const bootId = x["bootId"];
+  if (typeof bootId !== "string" || bootId === "") return null;
+  const serviceId = x["serviceId"];
+  if (typeof serviceId !== "string" && serviceId !== null) return null;
+  return { view, intent, observedAt, version, bootId, serviceId };
 }
 
 /** Guard POST /api/up | /api/down bodies (200 and 409 share the shape). */
@@ -220,12 +228,19 @@ export function nextPollDelay(vm: ViewModel, documentHidden: boolean): number | 
 
 /**
  * The click-vs-stale-poll race: a status response can arrive AFTER a command
- * response that reflects a later world. Versions are monotonic on the server,
- * so anything below the last accepted version is discarded. Equal versions
- * pass: same observation, harmless re-render.
+ * response that reflects a later world. Versions are monotonic on the server
+ * WITHIN one process, so anything below the last accepted version is
+ * discarded; equal versions pass (same observation, harmless re-render).
+ * Versions restart at 1 when the controller redeploys, so a changed bootId
+ * resets the floor entirely: without that, a long-lived tab would discard
+ * every fresh observation after a redeploy (review finding).
  */
-export function shouldAcceptVersion(lastAccepted: number | null, incoming: number): boolean {
-  return lastAccepted === null || incoming >= lastAccepted;
+export function shouldAcceptVersion(
+  last: { bootId: string; version: number } | null,
+  incoming: { bootId: string; version: number },
+): boolean {
+  if (last === null || last.bootId !== incoming.bootId) return true;
+  return incoming.version >= last.version;
 }
 
 /** Footer text. Clamped at zero so clock skew never reads "observed -3s ago". */

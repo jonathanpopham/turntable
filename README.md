@@ -82,7 +82,14 @@ cp .env.example .env     # fill in your Railway token and target project
 npm run build && npm start
 ```
 
-Open `http://localhost:3000` and enter `APP_PASSWORD` at the login view.
+Open `http://localhost:3000` and enter `APP_PASSWORD` (16 characters minimum;
+the passphrase is the entire authorization model for a button that spends
+money) at the login view.
+
+Deploying on Railway requires a volume mounted at `/data` with
+`STATE_DIR=/data` set: durable intent is what makes teardown survive
+restarts, and the app refuses to boot on Railway with the ephemeral default
+rather than let that guarantee be silently false.
 
 Unit and integration tests (247 across 15 files) are offline and never call
 Railway; `test/fake-railway.ts` is a production-faithful double, down to the

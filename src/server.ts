@@ -166,6 +166,13 @@ async function handle(
     });
     return;
   }
+  // Second CSRF layer for clients that send Origin but not Sec-Fetch-Site:
+  // a present Origin must match the Host this server was addressed as.
+  const origin = req.headers.origin;
+  if (origin !== undefined && !originMatchesHost(origin, req.headers.host)) {
+    sendJson(res, 403, { error: "cross-origin request refused (origin does not match host)" });
+    return;
+  }
   const result = path === "/api/up" ? await engine.up() : await engine.down();
   // "conflict" is the single-flight lock saying no; started/coalesced are wins.
   sendJson(res, result.outcome === "conflict" ? 409 : 200, {
@@ -188,7 +195,16 @@ function passphraseMatches(header: string | undefined, password: string): boolea
   return timingSafeEqual(suppliedDigest, expectedDigest);
 }
 
-// Only ever called with the two fixed file names in ROUTES, never with user
+function originMatchesHost(origin: string, host: string | undefined): boolean {
+  if (host === undefined) return false;
+  try {
+    return new URL(origin).host === host;
+  } catch {
+    return false; // unparseable Origin is not a browser being honest
+  }
+}
+
+// Only ever called with the fixed file names in ROUTES, never with user
 // input, so path traversal is impossible by construction.
 async function serveStatic(res: ServerResponse, publicDir: string, name: string): Promise<void> {
   let body: Buffer;
@@ -203,12 +219,24 @@ async function serveStatic(res: ServerResponse, publicDir: string, name: string)
     }
     throw e;
   }
-  res.writeHead(200, { "content-type": contentTypeFor(name) });
+  res.writeHead(200, { ...SECURITY_HEADERS, "content-type": contentTypeFor(name) });
   res.end(body);
 }
 
+// Cheap, always-correct-here protections for a public money button: never
+// sniffed, never framed, never cached, no referrer leakage. The CSP allows
+// only same-origin modules and the inline style block in index.html.
+const SECURITY_HEADERS = {
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "no-referrer",
+  "cache-control": "no-store",
+  "content-security-policy":
+    "default-src 'self'; style-src 'self' 'unsafe-inline'; frame-ancestors 'none'",
+} as const;
+
 function sendJson(res: ServerResponse, status: number, payload: unknown): void {
-  res.writeHead(status, { "content-type": "application/json" });
+  res.writeHead(status, { ...SECURITY_HEADERS, "content-type": "application/json" });
   res.end(JSON.stringify(payload));
 }
 

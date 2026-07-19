@@ -76,6 +76,12 @@ export type Command = "up" | "down";
 export type Decision =
   | { action: "create" }
   | { action: "delete"; serviceId: string }
+  // "down" during the create-visibility gap: nothing visible to delete yet,
+  // but the desire must be PERSISTED, not swallowed (review finding: a
+  // coalesce here looked like a cancel while the service could still appear
+  // and run). The engine records ABSENT; reconciliation deletes any
+  // late-visible service.
+  | { action: "record-absent"; view: ViewState }
   | { action: "coalesce"; view: ViewState }
   | { action: "conflict"; view: ViewState };
 
@@ -122,15 +128,20 @@ function presentView(
   phase: Phase | UnknownPhase | null,
   attempts: number,
 ): ViewState {
+  // Teardown intent dominates EVERY present observation. A building, failed,
+  // sleeping, or not-yet-deployed service we have been asked to remove is
+  // teardown in progress; anything else (review finding) shows a state whose
+  // button can change intent mid-teardown.
+  if (intent === "ABSENT") {
+    return { state: "deleting", attempts };
+  }
   if (phase === null) {
     // Real observable window: service exists, zero deployments yet.
     return { state: "creating", rawPhase: "PENDING" };
   }
   if (typeof phase === "object") {
-    // Unrecognized wire status, pre-wrapped by the read path. If we are
-    // tearing down anyway the surprise changes nothing; otherwise surface
-    // the raw status and let reconciliation sort it out.
-    if (intent === "ABSENT") return { state: "deleting", attempts };
+    // Unrecognized wire status, pre-wrapped by the read path. Surface the raw
+    // status and let reconciliation sort it out.
     return { state: "failed", reason: `unrecognized status ${phase.raw}` };
   }
   switch (phase) {
@@ -142,9 +153,7 @@ function presentView(
       // Surface the phase verbatim so the UI shows real progress, not a spinner.
       return { state: "creating", rawPhase: phase };
     case "SUCCESS":
-      // Intent overrides observation here: a healthy container we have been
-      // asked to remove is teardown in progress, not "running".
-      if (intent === "ABSENT") return { state: "deleting", attempts };
+      // ABSENT was handled above; a present SUCCESS here is simply running.
       return { state: "running" };
     case "SLEEPING":
       // Railway app-sleep: a running variant, surfaced honestly.
@@ -217,11 +226,11 @@ export function decide(command: Command, snapshot: Snapshot): Decision {
 /**
  * "down" against a view that permits deletion. If a service is visible we
  * delete it by id. If the view is intent-only (creating derived from
- * absent + intent PRESENT), there is nothing visible to delete: recording
- * intent ABSENT is the whole job, so it coalesces and the reconciler acts
- * if the service ever appears.
+ * absent + intent PRESENT), there is nothing visible to delete yet: recording
+ * intent ABSENT durably is the whole job, and reconciliation deletes any
+ * service that appears later.
  */
 function deleteIfVisible(serviceId: string | null, view: ViewState): Decision {
   if (serviceId !== null) return { action: "delete", serviceId };
-  return { action: "coalesce", view };
+  return { action: "record-absent", view };
 }

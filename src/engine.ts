@@ -1,6 +1,7 @@
 // The composition root: durable intent + observation cache + pure decisions +
 // the delete loop, assembled behind three methods the HTTP layer can call.
 // Everything stateful lives here; everything decisive lives in transitions.ts.
+import { randomBytes } from "node:crypto";
 import type { GqlConfig } from "./gql-request.js";
 import type { Target } from "./operations.js";
 import type { ProjectServicesResult } from "./gql-guards.js";
@@ -8,12 +9,18 @@ import type { Intent, Observation, Snapshot, ViewState } from "./transitions.js"
 import { decide, deriveView } from "./transitions.js";
 import { SingleFlight } from "./lock.js";
 import { StatusCache } from "./status-cache.js";
-import { makeVersionCounter, observe, reconcileOnBoot } from "./reconciler.js";
+import { deriveResumeAction, makeVersionCounter, observe, reconcileOnBoot } from "./reconciler.js";
 import type { ResumeAction } from "./reconciler.js";
 import { runDeleteLoop } from "./delete-loop.js";
 import type { StoredIntent } from "./intent-store.js";
 
 const STATUS_TTL_MS = 2_000;
+// Backoff for resolving an unknown boot observation (API down at startup).
+const BOOT_RESOLVE_BASE_MS = 2_000;
+const BOOT_RESOLVE_CAP_MS = 30_000;
+// Minimum spacing between automatic deploy-trigger nudges for a service that
+// exists with zero deployments under intent PRESENT.
+const DEPLOY_NUDGE_MIN_MS = 30_000;
 
 /** The four operations, injectable so tests use stubs and prod uses operations.ts. */
 export interface EngineOps {
@@ -50,6 +57,15 @@ export interface StatusResult {
   intent: Intent | null;
   observedAt: number;
   version: number;
+  /**
+   * Random per-process id. Versions restart at 1 when the controller
+   * redeploys; without this a tab holding a high version would discard every
+   * fresh observation for a long time (review finding). The client resets its
+   * version floor whenever bootId changes.
+   */
+  bootId: string;
+  /** The managed service id when observed present; surfaces the live Railway effect. */
+  serviceId: string | null;
 }
 
 export class Engine {
@@ -57,10 +73,12 @@ export class Engine {
   readonly #lock = new SingleFlight();
   readonly #cache: StatusCache<Observation>;
   readonly #observeOnce: () => Promise<Observation>;
+  readonly #bootId = randomBytes(6).toString("hex");
   #intent: Intent | null = null;
   #deleteAttempts = 0;
   #deleteLoopActive = false;
   #running = true;
+  #lastDeployNudge = 0;
 
   private constructor(deps: EngineDeps) {
     this.#deps = deps;
@@ -106,19 +124,29 @@ export class Engine {
       if (result.outcome === "conflict") {
         deps.warn({ msg: "boot resume-create conflicted; leaving to operator", view: result.view });
       }
+    } else if (resumeAction === "retry-observe") {
+      // The API was unreachable at boot, so intent could not be compared to
+      // reality. Status polls alone never re-run that comparison (review
+      // finding: durable ABSENT + boot outage left a deleting view that never
+      // deleted). Keep observing in the background until reality is known,
+      // then execute the real resume action.
+      engine.#resolveUnknownBoot();
     }
-    // "retry-observe" and "none" need no action: the next status poll observes.
+    // "none" needs no action: the next status poll observes.
     return { engine, resumed: resumeAction };
   }
 
   async status(): Promise<StatusResult> {
     const observation = await this.#cache.get();
+    this.#ensureConvergence(observation);
     const view = deriveView(this.#snapshot(observation));
     return {
       view,
       intent: this.#intent,
       observedAt: observation.observedAt,
       version: observation.version,
+      bootId: this.#bootId,
+      serviceId: observation.kind === "present" ? observation.serviceId : null,
     };
   }
 
@@ -148,8 +176,8 @@ export class Engine {
       return { outcome: "coalesced", view: decision.view };
     }
     if (decision.action === "conflict") return { outcome: "conflict", view: decision.view };
-    if (decision.action === "delete") {
-      // decide() never maps "up" to delete; defensive against future edits.
+    if (decision.action === "delete" || decision.action === "record-absent") {
+      // decide() never maps "up" to either; defensive against future edits.
       return { outcome: "conflict", view: deriveView(this.#snapshot(observation)) };
     }
     if (!this.#lock.tryAcquire()) {
@@ -187,6 +215,24 @@ export class Engine {
     const decision = decide("down", this.#snapshot(observation));
     if (decision.action === "coalesce") return { outcome: "coalesced", view: decision.view };
     if (decision.action === "conflict") return { outcome: "conflict", view: decision.view };
+    if (decision.action === "record-absent") {
+      // Create-visibility gap: nothing to delete yet, but the desire must be
+      // durable. If the service appears later, reconciliation observes
+      // ABSENT + present and starts the delete loop.
+      if (this.#lock.tryAcquire()) {
+        try {
+          await this.#deps.intentStore.save("ABSENT");
+          this.#intent = "ABSENT";
+        } finally {
+          this.#cache.invalidate();
+          this.#lock.release();
+        }
+        const after = await this.#cache.get();
+        this.#ensureConvergence(after);
+        return { outcome: "started", view: deriveView(this.#snapshot(after)) };
+      }
+      return { outcome: "coalesced", view: decision.view };
+    }
     if (decision.action === "create") {
       return { outcome: "conflict", view: deriveView(this.#snapshot(observation)) };
     }
@@ -212,6 +258,77 @@ export class Engine {
 
   #snapshot(observation: Observation): Snapshot {
     return { intent: this.#intent, observation, deleteAttempts: this.#deleteAttempts };
+  }
+
+  /**
+   * Convergence hook, run on every fresh observation: reality and durable
+   * intent may disagree without any command in flight (a service appearing
+   * after record-absent; a create whose deploy trigger was lost). Observation
+   * alone must never mutate EXCEPT toward recorded intent, which is exactly
+   * these two cases.
+   */
+  #ensureConvergence(observation: Observation): void {
+    if (observation.kind !== "present") return;
+    if (this.#intent === "ABSENT" && !this.#deleteLoopActive) {
+      this.#startDeleteLoop(observation.serviceId);
+      return;
+    }
+    if (
+      this.#intent === "PRESENT" &&
+      observation.phase === null &&
+      this.#deps.clock() - this.#lastDeployNudge >= DEPLOY_NUDGE_MIN_MS &&
+      this.#lock.tryAcquire()
+    ) {
+      // Present with zero deployments under PRESENT intent: the first deploy
+      // trigger was lost. Auto-nudge (throttled) so recovery does not depend
+      // on anyone pressing a button the UI does not offer while "creating".
+      this.#lastDeployNudge = this.#deps.clock();
+      const deps = this.#deps;
+      void deps.ops
+        .deployService(deps.config, deps.target, observation.serviceId)
+        .catch((e: unknown) => {
+          deps.warn({ msg: "auto deploy nudge failed; will retry after throttle", err: String(e) });
+        })
+        .finally(() => {
+          this.#cache.invalidate();
+          this.#lock.release();
+        });
+    }
+  }
+
+  /**
+   * Boot could not observe (API unreachable). Keep observing with capped
+   * backoff until reality is known, then run the true resume action. Without
+   * this, durable intent recovered at boot is never applied (review finding).
+   */
+  #resolveUnknownBoot(): void {
+    const deps = this.#deps;
+    const loop = async (): Promise<void> => {
+      let attempt = 0;
+      while (this.#running) {
+        const observation = await this.#observeOnce();
+        if (observation.kind !== "unknown") {
+          this.#cache.invalidate();
+          const action = deriveResumeAction(this.#intent, observation);
+          deps.warn({ msg: "boot observation resolved", action });
+          if (action === "resume-delete" && observation.kind === "present") {
+            this.#startDeleteLoop(observation.serviceId);
+          } else if (action === "trigger-deploy" || action === "resume-create") {
+            const result = await this.up();
+            if (result.outcome === "conflict") {
+              deps.warn({ msg: "boot resume after outage conflicted", view: result.view });
+            }
+          }
+          return;
+        }
+        attempt += 1;
+        const backoff = Math.min(BOOT_RESOLVE_BASE_MS * 2 ** attempt, BOOT_RESOLVE_CAP_MS);
+        await deps.sleep(backoff + Math.floor(deps.random() * BOOT_RESOLVE_BASE_MS));
+      }
+    };
+    void loop().catch((e: unknown) => {
+      deps.warn({ msg: "boot resolve loop threw unexpectedly", err: String(e) });
+    });
   }
 
   #startDeleteLoop(serviceId: string): void {

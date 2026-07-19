@@ -80,28 +80,35 @@ function everyIntent(view: ViewState): IntentColumns {
   return { PRESENT: view, ABSENT: view, NONE: view };
 }
 
+// Teardown intent dominates EVERY present observation (review finding: the
+// previous grid canonized per-phase exceptions, which left a failed or
+// building service showing a button that could change intent mid-teardown).
+function presentRow(view: ViewState): IntentColumns {
+  return { PRESENT: view, ABSENT: deleting(0), NONE: view };
+}
+
 const EXPECTED_VIEW: Record<string, IntentColumns> = {
   "read-failed": everyIntent(unknownView),
   "absent": { PRESENT: creating("REQUESTED"), ABSENT: idle, NONE: idle },
-  "present:QUEUED": everyIntent(creating("QUEUED")),
-  "present:WAITING": everyIntent(creating("WAITING")),
-  "present:INITIALIZING": everyIntent(creating("INITIALIZING")),
-  "present:BUILDING": everyIntent(creating("BUILDING")),
-  "present:DEPLOYING": everyIntent(creating("DEPLOYING")),
-  "present:SUCCESS": { PRESENT: running, ABSENT: deleting(0), NONE: running },
-  "present:SLEEPING": everyIntent(sleeping),
-  "present:FAILED": everyIntent(failed("deployment FAILED")),
-  "present:CRASHED": everyIntent(failed("deployment CRASHED")),
+  "present:QUEUED": presentRow(creating("QUEUED")),
+  "present:WAITING": presentRow(creating("WAITING")),
+  "present:INITIALIZING": presentRow(creating("INITIALIZING")),
+  "present:BUILDING": presentRow(creating("BUILDING")),
+  "present:DEPLOYING": presentRow(creating("DEPLOYING")),
+  "present:SUCCESS": presentRow(running),
+  "present:SLEEPING": presentRow(sleeping),
+  "present:FAILED": presentRow(failed("deployment FAILED")),
+  "present:CRASHED": presentRow(failed("deployment CRASHED")),
   "present:REMOVING": everyIntent(deleting(0)),
   "present:REMOVED": everyIntent(deleting(0)),
-  "present:NEEDS_APPROVAL": everyIntent(failed("unexpected status NEEDS_APPROVAL for an image deploy")),
-  "present:SKIPPED": everyIntent(failed("unexpected status SKIPPED for an image deploy")),
+  "present:NEEDS_APPROVAL": presentRow(failed("unexpected status NEEDS_APPROVAL for an image deploy")),
+  "present:SKIPPED": presentRow(failed("unexpected status SKIPPED for an image deploy")),
   "present:unknown-raw": {
     PRESENT: failed("unrecognized status HIBERNATING"),
     ABSENT: deleting(0),
     NONE: failed("unrecognized status HIBERNATING"),
   },
-  "present:no-deployment": everyIntent(creating("PENDING")),
+  "present:no-deployment": presentRow(creating("PENDING")),
 };
 
 type ObsCase = { key: string; observation: Observation };
@@ -206,10 +213,10 @@ const DECIDE_ROWS: DecideRow[] = [
     down: { action: "delete", serviceId: SID },
   },
   {
-    name: "creating (intent only, nothing visible yet): up coalesces, down coalesces",
+    name: "creating (intent only, nothing visible yet): up coalesces, down RECORDS absent",
     snapshot: snap("PRESENT", absent()),
     up: { action: "coalesce", view: creating("REQUESTED") },
-    down: { action: "coalesce", view: creating("REQUESTED") },
+    down: { action: "record-absent", view: creating("REQUESTED") },
   },
   {
     name: "running: up coalesces, down deletes",

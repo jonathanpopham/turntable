@@ -71,7 +71,18 @@ function readEnv(): BootEnv {
     missing.push("TARGET_ENVIRONMENT_ID (the environment inside that project)");
   }
   const password = envString("APP_PASSWORD");
-  if (password === null) missing.push("APP_PASSWORD (basic-auth passphrase for the UI)");
+  if (password === null) missing.push("APP_PASSWORD (login passphrase for the UI)");
+  else if (password.length < 16) {
+    // The passphrase is the entire authorization model for a button that
+    // spends money; a short one is a misconfiguration, not a preference.
+    missing.push("APP_PASSWORD must be at least 16 characters");
+  }
+  // Running on Railway (their injected env) with the ephemeral default state
+  // dir means durable intent silently is not durable: restart-survival would
+  // be a lie. Fail fast and name the fix.
+  if (process.env["RAILWAY_SERVICE_ID"] !== undefined && envString("STATE_DIR") === null) {
+    missing.push("STATE_DIR (mount a Railway volume, e.g. /data, and set STATE_DIR=/data)");
+  }
   const portRaw = envString("PORT") ?? String(DEFAULT_PORT);
   const port = Number(portRaw);
   if (!Number.isInteger(port) || port < 0 || port > 65_535) {

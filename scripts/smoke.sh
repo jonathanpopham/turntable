@@ -6,7 +6,7 @@
 # Required env:
 #   APP_URL            deployed roundhouse base url (no trailing slash)
 #   APP_PASSWORD       basic auth password
-#   RAILWAY_API_TOKEN  account or project token for the independent cleanup check
+#   RAILWAY_API_TOKEN  ACCOUNT token (sent as Bearer) for the independent cleanup check
 #   TARGET_PROJECT_ID  the managed project
 #   TARGET_ENVIRONMENT_ID
 set -euo pipefail
@@ -36,14 +36,25 @@ remaining_services() {
 }
 
 cleanup() {
-  # Unconditional: even if the smoke failed, no managed container survives.
+  # Unconditional, and VERIFIED: delete acceptance is not completion, so the
+  # trap reconciles until independently observed absence (review finding: a
+  # single fire-and-forget delete could still leave the paid service alive).
   echo "cleanup: forcing teardown of any surviving managed service"
-  IDS=$(gql "{\"query\":\"query { project(id: \\\"$TARGET_PROJECT_ID\\\") { services { edges { node { id name } } } } }\"}" \
-    | jq -r '.data.project.services.edges[].node | select(.name == "roundhouse-managed") | .id')
-  for id in $IDS; do
-    gql "{\"query\":\"mutation { serviceDelete(id: \\\"$id\\\", environmentId: \\\"$TARGET_ENVIRONMENT_ID\\\") }\"}" >/dev/null
-    echo "cleanup: delete requested for $id"
+  for round in 1 2 3 4 5 6 7 8 9 10; do
+    IDS=$(gql "{\"query\":\"query { project(id: \\\"$TARGET_PROJECT_ID\\\") { services { edges { node { id name } } } } }\"}" \
+      | jq -r '.data.project.services.edges[].node | select(.name == "roundhouse-managed") | .id')
+    if [ -z "$IDS" ]; then
+      echo "cleanup: verified absent (round $round)"
+      return 0
+    fi
+    for id in $IDS; do
+      gql "{\"query\":\"mutation { serviceDelete(id: \\\"$id\\\", environmentId: \\\"$TARGET_ENVIRONMENT_ID\\\") }\"}" >/dev/null
+      echo "cleanup: delete requested for $id"
+    done
+    sleep 3
   done
+  echo "cleanup: WARNING could not verify absence after 10 rounds; check the dashboard" >&2
+  return 1
 }
 trap cleanup EXIT
 

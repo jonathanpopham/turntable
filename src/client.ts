@@ -57,6 +57,7 @@ const actionButton = buttonById("action");
 const banner = byId("banner");
 const bannerText = byId("banner-text");
 const retryButton = buttonById("retry");
+const targetEl = byId("target-line");
 const observedEl = byId("observed");
 const versionEl = byId("version");
 const lockButton = buttonById("lock");
@@ -65,7 +66,7 @@ const lockButton = buttonById("lock");
 
 let passphrase: string | null = readStoredPassphrase();
 let currentVm: ViewModel | null = null;
-let lastVersion: number | null = null;
+let lastVersion: { bootId: string; version: number } | null = null;
 let lastObservedAt: number | null = null;
 let pollTimer: number | null = null;
 let commandInFlight = false;
@@ -136,9 +137,16 @@ function render(vm: ViewModel): void {
   actionButton.disabled = !vm.buttonEnabled || commandInFlight;
 }
 
+function renderTarget(serviceId: string | null): void {
+  targetEl.textContent =
+    serviceId === null
+      ? "roundhouse-managed \u00b7 nginx:alpine"
+      : `roundhouse-managed \u00b7 svc ${serviceId.slice(0, 8)}`;
+}
+
 function renderFooter(): void {
   if (lastObservedAt !== null) observedEl.textContent = observedAgoText(lastObservedAt, Date.now());
-  if (lastVersion !== null) versionEl.textContent = `v${lastVersion}`;
+  if (lastVersion !== null) versionEl.textContent = `v${lastVersion.version}`;
 }
 
 /** Retryable failure: the banner shows, the last good view stays rendered. */
@@ -222,8 +230,9 @@ async function refreshStatus(): Promise<void> {
     showError("status response did not match the expected shape");
     return;
   }
-  if (!shouldAcceptVersion(lastVersion, status.version)) return; // stale, discard
-  lastVersion = status.version;
+  if (!shouldAcceptVersion(lastVersion, status)) return; // stale, discard
+  lastVersion = { bootId: status.bootId, version: status.version };
+  renderTarget(status.serviceId);
   lastObservedAt = status.observedAt;
   clearBanner();
   render(toViewModel(status));
@@ -312,8 +321,9 @@ async function attemptLogin(candidate: string): Promise<void> {
   const body: unknown = await res.json().catch(() => null);
   const status = parseStatusResponse(body);
   if (status !== null) {
-    lastVersion = status.version;
+    lastVersion = { bootId: status.bootId, version: status.version };
     lastObservedAt = status.observedAt;
+    renderTarget(status.serviceId);
     render(toViewModel(status));
     renderFooter();
   }

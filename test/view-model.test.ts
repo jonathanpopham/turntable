@@ -22,7 +22,7 @@ import {
 } from "../src/view-model.js";
 
 function status(view: ViewState): StatusResponse {
-  return { view, intent: null, observedAt: 1_000, version: 1 };
+  return { view, intent: null, observedAt: 1_000, version: 1, bootId: "boot-a", serviceId: null };
 }
 
 // --- the render grid: one row per ViewState variant -----------------------
@@ -178,19 +178,21 @@ describe("parseStatusResponse", () => {
   it("accepts every known view variant round-trip", () => {
     for (const row of VM_GRID) {
       const wire: unknown = JSON.parse(
-        JSON.stringify({ view: row.view, intent: "PRESENT", observedAt: 5, version: 2 }),
+        JSON.stringify({ view: row.view, intent: "PRESENT", observedAt: 5, version: 2, bootId: "b", serviceId: null }),
       );
       expect(parseStatusResponse(wire)).toEqual({
         view: row.view,
         intent: "PRESENT",
         observedAt: 5,
         version: 2,
+        bootId: "b",
+        serviceId: null,
       });
     }
   });
 
   it("accepts null and ABSENT intents", () => {
-    const base = { view: { state: "idle" }, observedAt: 1, version: 1 };
+    const base = { view: { state: "idle" }, observedAt: 1, version: 1, bootId: "b", serviceId: null };
     expect(parseStatusResponse({ ...base, intent: null })?.intent).toBeNull();
     expect(parseStatusResponse({ ...base, intent: "ABSENT" })?.intent).toBe("ABSENT");
   });
@@ -201,6 +203,8 @@ describe("parseStatusResponse", () => {
       intent: null,
       observedAt: 1,
       version: 1,
+      bootId: "b",
+      serviceId: null,
     });
     expect(parsed).not.toBeNull();
     expect(parsed?.view).toEqual({ state: "unknown", reason: 'unrecognized state "hibernating"' });
@@ -212,7 +216,7 @@ describe("parseStatusResponse", () => {
   });
 
   it("rejects malformed shapes", () => {
-    const good = { view: { state: "idle" }, intent: null, observedAt: 1, version: 1 };
+    const good = { view: { state: "idle" }, intent: null, observedAt: 1, version: 1, bootId: "b", serviceId: null };
     const bad: unknown[] = [
       null,
       undefined,
@@ -295,15 +299,23 @@ describe("nextPollDelay", () => {
 // --- shouldAcceptVersion (the click-vs-stale-poll race) --------------------
 
 describe("shouldAcceptVersion", () => {
+  const v = (bootId: string, version: number) => ({ bootId, version });
+
   it("accepts anything before a first version is seen", () => {
-    expect(shouldAcceptVersion(null, 0)).toBe(true);
-    expect(shouldAcceptVersion(null, 99)).toBe(true);
+    expect(shouldAcceptVersion(null, v("a", 0))).toBe(true);
+    expect(shouldAcceptVersion(null, v("a", 99))).toBe(true);
   });
 
-  it("accepts equal and newer, discards older", () => {
-    expect(shouldAcceptVersion(5, 6)).toBe(true);
-    expect(shouldAcceptVersion(5, 5)).toBe(true);
-    expect(shouldAcceptVersion(5, 4)).toBe(false);
+  it("accepts equal and newer, discards older, within one boot", () => {
+    expect(shouldAcceptVersion(v("a", 5), v("a", 6))).toBe(true);
+    expect(shouldAcceptVersion(v("a", 5), v("a", 5))).toBe(true);
+    expect(shouldAcceptVersion(v("a", 5), v("a", 4))).toBe(false);
+  });
+
+  it("a changed bootId resets the floor: v1 after a redeploy is accepted", () => {
+    // Review finding: versions restart per process; a long-lived tab must not
+    // discard fresh observations after the controller redeploys.
+    expect(shouldAcceptVersion(v("a", 68), v("b", 1))).toBe(true);
   });
 });
 
