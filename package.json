@@ -1,0 +1,24 @@
+{
+  "name": "turntable",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Spin a container up, spin it down. A hardened single-slot control plane on Railway's GraphQL API.",
+  "type": "module",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json && tsc -p tsconfig.client.json",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "start": "node --env-file-if-exists=.env dist/src/main.js",
+    "verify": "bash scripts/verify.sh"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "eslint": "^10.7.0",
+    "typescript": "5.9",
+    "typescript-eslint": "^8.64.0",
+    "vitest": "^4.1.10"
+  }
+}

@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Turntable</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --ground: light-dark(#fafafc, #0c0b12);
+      --card: light-dark(#ffffff, #14121d);
+      --border: light-dark(#e6e4ef, #262336);
+      --ink: light-dark(#1a1826, #eae7f4);
+      --muted: light-dark(#55516b, #a29dbe);
+      --faint: light-dark(#8b87a3, #6b6685);
+      --accent: light-dark(#5b50e0, #8b7dff);
+      --tone: var(--faint);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; min-height: 100dvh; display: grid; place-items: center;
+      font-family: ui-sans-serif, system-ui, sans-serif;
+      background: var(--ground); color: var(--ink);
+      padding: 24px;
+    }
+    .card {
+      width: 100%; max-width: 380px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 24px 28px 20px;
+      box-shadow: light-dark(0 10px 30px -18px rgb(26 24 38 / 0.25), 0 14px 40px -20px rgb(0 0 0 / 0.7));
+    }
+    .brand {
+      margin: 0 0 22px;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      color: var(--faint);
+    }
+    .state-row { display: flex; align-items: center; gap: 12px; }
+    .dot {
+      width: 12px; height: 12px; border-radius: 50%; flex: none;
+      background: var(--tone);
+      box-shadow: 0 0 0 4px color-mix(in srgb, var(--tone) 18%, transparent);
+      transition: background-color 0.35s ease, box-shadow 0.35s ease;
+    }
+    .card[data-tone="active"] { --tone: var(--accent); }
+    .card[data-tone="good"]   { --tone: light-dark(#14966a, #34c98a); }
+    .card[data-tone="bad"]    { --tone: light-dark(#d6383e, #f2555a); }
+    .card[data-tone="warn"]   { --tone: light-dark(#b07b10, #f5b944); }
+    .state-label {
+      margin: 0; font-size: 28px; font-weight: 650; letter-spacing: -0.02em; line-height: 1.2;
+    }
+    .spinner {
+      width: 16px; height: 16px; flex: none; border-radius: 50%;
+      border: 2px solid color-mix(in srgb, var(--tone) 30%, transparent);
+      border-top-color: var(--tone);
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .detail {
+      margin: 8px 0 0 24px; min-height: 1.4em;
+      font-size: 13.5px; line-height: 1.4; color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      overflow-wrap: anywhere;
+    }
+    .banner {
+      display: flex; align-items: center; gap: 10px;
+      margin: 16px 0 0; padding: 10px 12px;
+      border-radius: 10px; font-size: 13px; line-height: 1.4;
+    }
+    .banner[data-kind="error"] {
+      background: color-mix(in srgb, light-dark(#d6383e, #f2555a) 12%, transparent);
+      color: light-dark(#a12b30, #ff9a9e);
+    }
+    .banner[data-kind="notice"] {
+      background: color-mix(in srgb, light-dark(#b07b10, #f5b944) 14%, transparent);
+      color: light-dark(#7c5a0e, #f0c568);
+    }
+    .banner span { flex: 1; }
+    .retry {
+      flex: none; padding: 4px 10px; font: inherit; font-size: 12.5px; font-weight: 600;
+      color: inherit; background: transparent;
+      border: 1px solid currentColor; border-radius: 7px; cursor: pointer;
+    }
+    .action {
+      width: 100%; margin-top: 20px; padding: 12px 0;
+      font: inherit; font-size: 15px; font-weight: 600; letter-spacing: 0.01em;
+      color: #ffffff; background: var(--accent);
+      border: none; border-radius: 10px; cursor: pointer;
+      transition: filter 0.2s ease, opacity 0.2s ease;
+    }
+    .action:hover:enabled { filter: brightness(1.08); }
+    .action:disabled { opacity: 0.45; cursor: not-allowed; }
+    .passfield {
+      width: 100%; margin-top: 4px; padding: 11px 12px;
+      font: inherit; font-size: 15px;
+      color: var(--ink); background: var(--ground);
+      border: 1px solid var(--border); border-radius: 10px;
+    }
+    .passfield:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; border-color: transparent; }
+    .login-hint { margin: 14px 0 6px; font-size: 13.5px; color: var(--muted); }
+    .login-error { min-height: 1.3em; margin: 8px 0 0; font-size: 13px; color: light-dark(#a12b30, #ff9a9e); }
+    :is(.action, .retry, .lock, .passfield):focus-visible {
+      outline: 2px solid var(--accent); outline-offset: 2px;
+    }
+    .meta {
+      display: flex; justify-content: space-between; align-items: center; gap: 12px;
+      margin-top: 18px; padding-top: 14px;
+      border-top: 1px solid var(--border);
+      font-size: 12px; color: var(--faint);
+      font-variant-numeric: tabular-nums;
+    }
+    .meta .right { display: flex; align-items: center; gap: 10px; }
+    .lock {
+      padding: 2px 8px; font: inherit; font-size: 11px; font-weight: 600;
+      color: var(--faint); background: transparent;
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+    }
+    .lock:hover { color: var(--muted); }
+    @media (prefers-reduced-motion: reduce) {
+      .spinner { animation: none; opacity: 0.7; }
+      .dot, .action { transition: none; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="card" id="login" hidden>
+      <p class="brand">Turntable</p>
+      <form id="login-form">
+        <p class="login-hint">This panel starts and stops a real container. Enter the operator passphrase.</p>
+        <input class="passfield" id="passphrase" type="password" autocomplete="current-password" placeholder="Passphrase" aria-label="Passphrase">
+        <p class="login-error" id="login-error" role="alert"></p>
+        <button type="submit" class="action">Unlock</button>
+      </form>
+    </section>
+
+    <section class="card" data-tone="neutral" id="card" hidden>
+      <p class="brand">Turntable</p>
+      <div aria-live="polite">
+        <div class="state-row">
+          <span class="dot" id="state-dot" aria-hidden="true"></span>
+          <h1 class="state-label" id="state-label">Connecting</h1>
+          <span class="spinner" id="spinner" aria-hidden="true"></span>
+        </div>
+        <p class="detail" id="state-detail">reading slot status</p>
+        <div class="banner" id="banner" data-kind="error" role="status" hidden>
+          <span id="banner-text"></span>
+          <button type="button" class="retry" id="retry" hidden>Retry</button>
+        </div>
+      </div>
+      <button type="button" class="action" id="action" disabled>Spin up</button>
+      <footer class="meta">
+        <span>roundhouse-managed · nginx:alpine</span>
+        <span class="right">
+          <span id="observed">no read yet</span>
+          <span id="version">v-</span>
+          <button type="button" class="lock" id="lock">Lock</button>
+        </span>
+      </footer>
+    </section>
+  </main>
+  <noscript><p style="text-align:center">This UI needs JavaScript to poll the slot.</p></noscript>
+  <script type="module" src="/client.js"></script>
+</body>
+</html>

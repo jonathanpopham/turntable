@@ -1,0 +1,22 @@
+name: smoke
+# Live smoke against the DEPLOYED app: manual, pre-interview. Spends cents,
+# so it never runs per-push; the concurrency group stops two runs colliding
+# on the single managed slot.
+on:
+  workflow_dispatch:
+concurrency:
+  group: live-smoke
+  cancel-in-progress: false
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: deployed-app smoke with unconditional teardown
+        env:
+          APP_URL: ${{ secrets.APP_URL }}
+          APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
+          RAILWAY_API_TOKEN: ${{ secrets.RAILWAY_API_TOKEN }}
+          TARGET_PROJECT_ID: ${{ secrets.TARGET_PROJECT_ID }}
+          TARGET_ENVIRONMENT_ID: ${{ secrets.TARGET_ENVIRONMENT_ID }}
+        run: bash scripts/smoke.sh

@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ES2022",
+    "moduleResolution": "bundler",
+    "outDir": "public",
+    "rootDir": "src"
+  },
+  "include": ["src/client.ts", "src/view-model.ts", "src/transitions.ts"]
+}
