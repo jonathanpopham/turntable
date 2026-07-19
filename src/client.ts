@@ -122,7 +122,7 @@ function showCard(): void {
 
 /** Every 401 funnels here: the credential is wrong or expired, say so once. */
 function handleUnauthorized(): void {
-  showLogin(passphrase === null ? "" : "Passphrase rejected. Try again.");
+  showLogin(passphrase === null ? "" : "Incorrect password.");
 }
 
 // --- rendering --------------------------------------------------------------
@@ -307,7 +307,7 @@ async function attemptLogin(candidate: string): Promise<void> {
   }
   if (res.status === 401) {
     passphrase = null;
-    loginError.textContent = "Passphrase rejected.";
+    loginError.textContent = "Incorrect password.";
     return;
   }
   if (!res.ok) {
@@ -335,7 +335,7 @@ loginForm.addEventListener("submit", (e) => {
   if (!(loginInput instanceof HTMLInputElement)) return;
   const candidate = loginInput.value;
   if (candidate === "") {
-    loginError.textContent = "Enter the passphrase.";
+    loginError.textContent = "Enter your password.";
     return;
   }
   fireAndForget(attemptLogin(candidate));

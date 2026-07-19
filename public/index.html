@@ -129,10 +129,10 @@
     <section class="card" id="login" hidden>
       <p class="brand">Turntable</p>
       <form id="login-form">
-        <p class="login-hint">This panel starts and stops a real container. Enter the operator passphrase.</p>
-        <input class="passfield" id="passphrase" type="password" autocomplete="current-password" placeholder="Passphrase" aria-label="Passphrase">
+        <label class="login-hint" for="passphrase">Password</label>
+        <input class="passfield" id="passphrase" type="password" autocomplete="current-password" aria-label="Password">
         <p class="login-error" id="login-error" role="alert"></p>
-        <button type="submit" class="action">Unlock</button>
+        <button type="submit" class="action">Log in</button>
       </form>
     </section>
 
@@ -156,7 +156,7 @@
         <span class="right">
           <span id="observed">no read yet</span>
           <span id="version">v-</span>
-          <button type="button" class="lock" id="lock">Lock</button>
+          <button type="button" class="lock" id="lock">Log out</button>
         </span>
       </footer>
     </section>
