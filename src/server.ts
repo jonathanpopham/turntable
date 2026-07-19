@@ -242,7 +242,7 @@ function sendJson(res: ServerResponse, status: number, payload: unknown): void {
 
 // The allow header tells a wrong-verb caller the right one (RFC 9110 15.5.6).
 function methodNotAllowed(res: ServerResponse, allow: string): void {
-  res.writeHead(405, { allow, "content-type": "application/json" });
+  res.writeHead(405, { ...SECURITY_HEADERS, allow, "content-type": "application/json" });
   res.end(JSON.stringify({ error: "method not allowed" }));
 }
 
